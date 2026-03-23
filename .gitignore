@@ -4,7 +4,5 @@ __pycache__/
 venv/
 .env
 .vscode/
-model/
-!model/README.md
 *.log
 .DS_Store
