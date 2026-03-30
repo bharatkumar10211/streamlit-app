@@ -12,6 +12,8 @@ import os
 model_path = os.path.join("model", "selection_model.pkl")
 model = joblib.load(model_path)
 
+plt.style.use("dark_background")
+
 st.set_page_config(page_title="Cricket Selection AI", layout="wide")
 
 # Custom CSS for Premium Look
@@ -24,45 +26,36 @@ st.markdown("""
     
     /* Main Background & Base Styling */
     .stApp {
-        background: linear-gradient(160deg, #f8f9fa 0%, #eef2f3 100%);
-        color: #1e3c72;
+        background: #0f172a;
+        color: #e2e8f0;   /* changed */
     }
 
     /* Premium Result Card */
     .result-card {
         background: rgba(255, 255, 255, 0.9);
-        backdrop-filter: blur(10px);
-        padding: 40px;
-        border-radius: 25px;
-        border: 1px solid rgba(30, 60, 114, 0.1);
-        box-shadow: 0 15px 45px rgba(0, 0, 0, 0.08);
-        color: #1e3c72;
-        margin: 30px auto;
-        max-width: 850px;
-        text-align: center;
+        color: #0f172a;   /* changed for contrast */
+        border: 1px solid rgba(255, 255, 255, 0.2);
     }
     
     /* Sleek Action Button */
     .stButton>button {
-        width: 100%;
-        height: 55px;
-        background: #1e3c72;
+        background: #3b82f6;   /* changed */
         color: white;
-        border: none;
-        border-radius: 12px;
-        font-weight: 700;
-        transition: 0.3s;
     }
     .stButton>button:hover {
-        background: #2a5298;
-        transform: scale(1.01);
+        background: #2563eb;   /* changed */
     }
 
     /* Headers */
     h1, h2, h3 {
-        color: #1e3c72 !important;
-        font-weight: 700 !important;
+        color: #93c5fd !important;   /* changed */
     }
+
+    /* Labels (important fix) */
+    label {
+        color: #cbd5f5 !important;   /* changed */
+    }
+
 </style>
 """, unsafe_allow_html=True)
 
@@ -71,19 +64,17 @@ status_placeholder = st.empty()
 st.write("---")
 try:
     benchmarks = joblib.load("model/benchmarks.pkl")
+    max_score = joblib.load("model/max_score.pkl")
 except:
     benchmarks = {}
-
-countries = ["India", "Australia", "England", "New Zealand", "South Africa", "Pakistan", "Sri Lanka", "West Indies", "Afghanistan"]
+    max_score = 100.0
 
 # Top Level Selectors (Mobile Responsive)
-c1, c2, c3 = st.columns(3)
+c1, c2 = st.columns(2)
 with c1:
     role = st.selectbox("Player Role", ["Batsman", "Bowler", "Wicketkeeper", "All-Rounder"])
 with c2:
     format_type = st.selectbox("Format", ["T20", "ODI", "Test"])
-with c3:
-    country = st.selectbox("Country Team", countries)
 
 # Advanced Performance Metrics (Collapsible)
 with st.expander("📊 Enter Player Performance Metrics", expanded=True):
@@ -184,35 +175,50 @@ if st.button("🚀 EXECUTE AI SELECTION ANALYSIS"):
         else: # All rounder
             score = (norm_avg * 0.2) + (norm_sr * 0.15) + (norm_last5 * 0.2) + (min(wickets, 20) * 2.5)
 
-        bench_val = benchmarks.get((country, format_type, role), 50.0)
+        bench_val = benchmarks.get((format_type, role), 50.0)
+        player_percent = (score / max_score) * 100
         
-        if score >= bench_val:
-            label, color, status = "🌟 SELECTED", "#2ecc71", "success"
-        elif score >= bench_val * 0.85:
-            label, color, status = "👍 RECOMMENDED", "#3498db", "info"
-        elif score >= bench_val * 0.60:
-            label, color, status = "⚠️ AVERAGE POTENTIAL", "#f1c40f", "warning"
+        if player_percent >= bench_val:
+            label, color = "🌟 SELECTED", "#22c55e"
+        elif player_percent >= bench_val * 0.85:
+            label, color = "👍 RECOMMENDED", "#3b82f6"
+        elif player_percent >= bench_val * 0.60:
+            label, color = "⚠️ AVERAGE", "#facc15"
         else:
-            label, color, status = "❌ NOT RECOMMENDED", "#e74c3c", "error"
+            label, color = "❌ NOT SELECTED", "#ef4444"
 
         # Unified Selection Dashboard Panel
         st.write("---")
         with st.container():
             st.markdown(f"""
-            <div style='background: white; padding: 30px; border-radius: 20px; border: 1px solid #ddd; box-shadow: 0 10px 30px rgba(0,0,0,0.05); text-align: center; margin-bottom: 25px;'>
-                <h4 style='color: #666; margin-bottom: 10px;'>Selection Verdict</h4>
-                <h1 style='color: {color}; font-size: 3.2rem; margin: 0;'>{label}</h1>
-                <p style='color: #777; font-size: 1.1rem;'>AI Score: <b>{score:.1f}</b> / Standard: <b>{bench_val:.1f}</b></p>
-                <div style='display: flex; justify-content: space-around; background: #f8f9fa; padding: 15px; border-radius: 12px; margin: 20px 0;'>
-                    <div style='text-align: center;'> <span style='color: #888; font-size: 0.9rem;'>RECENT FORM</span><br><b style='font-size: 1.5rem;'>{last5}</b> </div>
-                    <div style='text-align: center;'> <span style='color: #888; font-size: 0.9rem;'>PEAK IMPACT</span><br><b style='font-size: 1.5rem;'>{hs}</b> </div>
-                    <div style='text-align: center;'> <span style='color: #888; font-size: 0.9rem;'>PROBABILITY</span><br><b style='color: {color}; font-size: 1.5rem;'>{min(score/bench_val*100 if bench_val > 0 else 0, 100):.1f}%</b> </div>
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
+<div style='background: #1e293b; padding: 30px; border-radius: 20px; border: 1px solid #334155; box-shadow: 0 10px 30px rgba(0,0,0,0.3); text-align: center; margin-bottom: 25px;'>
+    <h4 style='color: #cbd5f5; margin-bottom: 10px;'>Selection Verdict</h4>
+    <h1 style='color: {color}; font-size: 3.2rem; margin: 0;'>{label}</h1>
+    <p style='color: #94a3b8; font-size: 1.1rem;'>
+        AI Score: <b style='color:white;'>{player_percent:.1f}%</b> /
+        Standard: <b style='color:white;'>{bench_val:.1f}%</b>
+    </p>
+    <div style='display: flex; justify-content: space-around; background: #0f172a; padding: 15px; border-radius: 12px; margin: 20px 0;'>
+        <div style='text-align: center;'>
+            <span style='color: #94a3b8; font-size: 0.9rem;'>RECENT FORM</span><br>
+            <b style='font-size: 1.5rem; color:white;'>{last5}</b>
+        </div>
+        <div style='text-align: center;'>
+            <span style='color: #94a3b8; font-size: 0.9rem;'>PEAK IMPACT</span><br>
+            <b style='font-size: 1.5rem; color:white;'>{hs}</b>
+        </div>
+        <div style='text-align: center;'>
+            <span style='color: #94a3b8; font-size: 0.9rem;'>PROBABILITY</span><br>
+            <b style='color: {color}; font-size: 1.5rem;'>
+                {min(player_percent/bench_val*100 if bench_val > 0 else 0, 100):.1f}%
+            </b>
+        </div>
+    </div>
+</div>
+""", unsafe_allow_html=True)
 
             # --- 1. Selection Probability (Top Header) ---
-            prob_val = min(score/bench_val*100 if bench_val > 0 else 0, 100)
+            prob_val = min(player_percent/bench_val*100 if bench_val > 0 else 0, 100)
             fig_gauge = go.Figure(go.Indicator(
                 mode="gauge+number", value=prob_val,
                 title={'text': "Selection Probability (%)", 'font': {'size': 18}},
@@ -239,12 +245,25 @@ if st.button("🚀 EXECUTE AI SELECTION ANALYSIS"):
                 user_prof.append(user_prof[0]); bench_prof.append(bench_prof[0]); angles.append(angles[0])
                 
                 fig_radar, ax_radar = plt.subplots(figsize=(4, 4), subplot_kw=dict(polar=True))
-                ax_radar.plot(angles, bench_prof, color='#bdc3c7', linewidth=1, linestyle='--')
-                ax_radar.plot(angles, user_prof, color=color, linewidth=2, label='Player')
-                ax_radar.fill(angles, user_prof, color=color, alpha=0.2)
+
+                # Better styling
+                ax_radar.set_facecolor("#0f172a")
+                fig_radar.patch.set_facecolor("#0f172a")
+
+                # Plot
+                ax_radar.plot(angles, user_prof, linewidth=2, color=color)
+                ax_radar.fill(angles, user_prof, alpha=0.3, color=color)
+
+                ax_radar.plot(angles, bench_prof, linestyle='dashed', linewidth=1, color='#bdc3c7')
+
+                # Labels
                 ax_radar.set_xticks(angles[:-1])
-                ax_radar.set_xticklabels(labels, fontsize=8)
-                ax_radar.set_title("🏆 Profile Radar", fontsize=10)
+                ax_radar.set_xticklabels(labels, fontsize=9, color="white")
+
+                ax_radar.tick_params(colors='white')
+
+                ax_radar.set_title("🏆 Player Profile", color="white", fontsize=10)
+
                 st.pyplot(fig_radar)
 
             with gc2:
@@ -254,21 +273,60 @@ if st.button("🚀 EXECUTE AI SELECTION ANALYSIS"):
                     elif x > 48 and y > 48: return "ABOVE AVG", "info"
                     else: return "BELOW AVG", "error"
 
-                user_x, user_y = score, (last5/2.5 + hs)/2.0
+                user_x, user_y = player_percent, (last5/2.5 + hs)/2.0
                 z_lab, z_typ = classify_zone(user_x, user_y)
                 st.markdown(f"<div style='text-align: center; background: #f8f9fa; padding: 5px; border-radius: 5px; border-left: 5px solid {color}; margin-bottom: 15px;'><b>{z_lab} ZONE</b></div>", unsafe_allow_html=True)
 
                 try:
-                    mock_data = np.random.normal(50, 10, (100, 2)) 
+                    df = pd.read_csv(f"player_stats_{format_type.lower()}.csv")
+                    df = df[df["player_type"] == role]
+
+                    if role in ["Batsman", "Wicketkeeper"]:
+                        x = df["runs"]
+                        y = df["batting_strike_rate"]
+                        xlabel = "Runs"
+                        ylabel = "Strike Rate"
+                        highlight_x = runs
+                        highlight_y = sr
+                    elif role == "Bowler":
+                        x = df["wickets"]
+                        y = df["economy"]
+                        xlabel = "Wickets"
+                        ylabel = "Economy"
+                        highlight_x = wickets
+                        highlight_y = econ
+                    else: # All-Rounder
+                        x = df["runs"]
+                        y = df["wickets"]
+                        xlabel = "Runs"
+                        ylabel = "Wickets"
+                        highlight_x = runs
+                        highlight_y = wickets
+                    
                     fig_cluster, ax_cluster = plt.subplots(figsize=(4, 4))
-                    ax_cluster.scatter(mock_data[:,0], mock_data[:,1], alpha=0.1, c='gray')
-                    ax_cluster.axvline(50, color='#ccc', linestyle='--', alpha=0.5)
-                    ax_cluster.axhline(50, color='#ccc', linestyle='--', alpha=0.5)
-                    ax_cluster.scatter([user_x], [user_y], color='red', s=150, zorder=5, edgecolors='white', linewidth=2)
-                    ax_cluster.set_title("Target Selection Cluster", fontsize=10)
-                    ax_cluster.set_xlim(0, 100); ax_cluster.set_ylim(0, 100)
+                    
+                    # Better styling
+                    ax_cluster.set_facecolor("#0f172a")
+                    fig_cluster.patch.set_facecolor("#0f172a")
+                    
+                    ax_cluster.scatter(x, y, alpha=0.4, color='#3b82f6')
+                    
+                    # Highlight player
+                    ax_cluster.scatter([highlight_x], [highlight_y], s=150, color=color, edgecolors='white', linewidth=2, zorder=5)
+                    
+                    ax_cluster.set_title(f"{role} Performance Distribution", color="white", fontsize=10)
+                    ax_cluster.set_xlabel(xlabel, color="white")
+                    ax_cluster.set_ylabel(ylabel, color="white")
+                    ax_cluster.tick_params(colors="white")
+                    
                     st.pyplot(fig_cluster)
-                except:
+                    
+                    # Meaning interpretation
+                    if player_percent > bench_val:
+                        st.success("Player is above average cluster")
+                    else:
+                        st.error("Player is below average cluster")
+                except Exception as e:
                     st.info("Intelligence clustering analysis complete.")
 
         st.divider()

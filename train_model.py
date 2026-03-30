@@ -48,7 +48,7 @@ def build_refined_pipeline():
         })
 
     print("Engineering performance-oriented features...")
-    agg_df = raw_df.groupby(['player_name', 'country', 'player_type', 'match_format']).apply(get_player_enhanced_stats).reset_index()
+    agg_df = raw_df.groupby(['player_name', 'player_type', 'match_format']).apply(get_player_enhanced_stats).reset_index()
 
     # 3. Refined Scoring Formula (Batsman centric as per Step 5)
     # score = avg*0.35 + sr*0.25 (scaled) + last5*0.3 + hs*0.1
@@ -93,12 +93,29 @@ def build_refined_pipeline():
     c_means = agg_df.groupby('cluster')['score'].mean().sort_values().index
     agg_df['levels'] = agg_df['cluster'].map({c_means[0]: 0, c_means[1]: 1, c_means[2]: 2})
 
-    # 5. Top 16 Benchmarking per Country
-    benchmarks = agg_df.sort_values("score", ascending=False) \
-                    .groupby(["country", "match_format", "player_type"]) \
-                    .head(16) \
-                    .groupby(["country", "match_format", "player_type"])["score"] \
-                    .mean().to_dict()
+    # 5. Top 16 Benchmarking Overall (Percent)
+    max_score = agg_df["score"].max()
+    agg_df["percent"] = (agg_df["score"] / max_score) * 100
+
+    benchmarks = {}
+    roles = agg_df["player_type"].unique()
+    formats = agg_df["match_format"].unique()
+
+    for f in formats:
+        for r in roles:
+            filtered = agg_df[
+                (agg_df["player_type"] == r) &
+                (agg_df["match_format"] == f)
+            ]
+            
+            top16 = filtered.sort_values(by="percent", ascending=False).head(16)
+            
+            if len(top16) > 0:
+                avg_percent = top16["percent"].mean()
+            else:
+                avg_percent = 0
+                
+            benchmarks[(f, r)] = avg_percent
 
     # 6. Advanced Visualization Suite
     os.makedirs("assets", exist_ok=True)
@@ -135,6 +152,7 @@ def build_refined_pipeline():
     joblib.dump(kmeans, "model/kmeans_model.pkl")
     joblib.dump(scaler, "model/scaler.pkl")
     joblib.dump(benchmarks, "model/benchmarks.pkl")
+    joblib.dump(max_score, "model/max_score.pkl")
     
     # Save the Random Forest classifier
     from sklearn.ensemble import RandomForestClassifier
