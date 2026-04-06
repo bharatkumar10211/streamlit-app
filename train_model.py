@@ -44,7 +44,9 @@ def build_refined_pipeline():
             'econ': econ,
             'bowl_avg': bowl_avg,
             'matches': matches,
-            'runs': total_runs
+            'runs': total_runs,
+            'total_balls_faced': total_balls,
+            'balls_per_innings': total_balls / (innings if innings > 0 else 1)
         })
 
     print("Engineering performance-oriented features...")
@@ -53,7 +55,7 @@ def build_refined_pipeline():
     # 3. Refined Scoring Formula (Batsman centric as per Step 5)
     # score = avg*0.35 + sr*0.25 (scaled) + last5*0.3 + hs*0.1
     # We normalize internal components for a balanced score
-    def calculate_balanced_score(row):
+    def get_base_score(row):
         # Normalizing Strike Rate (ideal 140+ in T20)
         norm_sr = min(row['sr'], 200) / 2
         # Normalizing Last 5 (ideal 200+)
@@ -63,6 +65,15 @@ def build_refined_pipeline():
         # Average (ideal 45+)
         norm_avg = min(row['avg'], 60) * 1.66
         
+        if row['player_type'] in ['Batsman', 'Wicketkeeper'] and row['match_format'] == 'Test':
+            norm_avg = min(row['avg'], 60) / 60
+            norm_balls = min(row['balls_per_innings'], 120) / 120
+            norm_last5 = min(row['last5_runs'], 250) / 250
+            norm_hs = min(row['high_score'], 150) / 150
+
+            s_fraction = (norm_avg * 0.35) + (norm_balls * 0.30) + (norm_last5 * 0.20) + (norm_hs * 0.15)
+            return s_fraction
+
         if row['player_type'] in ['Batsman', 'Wicketkeeper']:
             s = (norm_avg * 0.35) + (norm_sr * 0.25) + (norm_last5 * 0.30) + (norm_hs * 0.10)
         elif row['player_type'] == 'Bowler':
@@ -73,9 +84,70 @@ def build_refined_pipeline():
         else: # All-Rounder
             s = (norm_avg * 0.2) + (norm_sr * 0.15) + (norm_last5 * 0.2) + (min(row['wickets'], 20) * 2.5)
             
-        return s
+        return s / 100.0  # Return as fraction (0.0 to 1.0)
 
-    agg_df['score'] = agg_df.apply(calculate_balanced_score, axis=1)
+    def calibrate_score(row):
+        base = row['score'] * 100
+
+        fmt = row['match_format']
+        role = row['player_type']
+
+        # ---------------- T20 ----------------
+        if fmt == 'T20':
+            if role in ['Batsman', 'Wicketkeeper']:
+                return (base * 0.90) + 10   # aggressive scoring → 70–85
+            elif role == 'Bowler':
+                return (base * 0.85) + 12   # slightly lower ceiling
+            else:  # All-Rounder
+                return (base * 0.88) + 11
+
+        # ---------------- ODI ----------------
+        elif fmt == 'ODI':
+            if role in ['Batsman', 'Wicketkeeper']:
+                return (base * 0.85) + 8    # balanced
+            elif role == 'Bowler':
+                return (base * 0.80) + 10
+            else:
+                return (base * 0.83) + 9
+
+        # ---------------- TEST ----------------
+        else:
+            if role in ['Batsman', 'Wicketkeeper']:
+                return (base * 0.80) + 12   # consistency → higher base
+            elif role == 'Bowler':
+                return (base * 0.75) + 15   # wickets priority
+            else:
+                return (base * 0.78) + 13
+
+    def apply_max_cap(value, role, fmt):
+        if fmt == "T20":
+            if role in ['Batsman', 'Wicketkeeper']:
+                return min(value, 85)
+            elif role == 'Bowler':
+                return min(value, 82)
+            else:
+                return min(value, 84)
+
+        elif fmt == "ODI":
+            if role in ['Batsman', 'Wicketkeeper']:
+                return min(value, 80)
+            elif role == 'Bowler':
+                return min(value, 78)
+            else:
+                return min(value, 79)
+
+        else:  # Test
+            if role in ['Batsman', 'Wicketkeeper']:
+                return min(value, 78)
+            elif role == 'Bowler':
+                return min(value, 76)
+            else:
+                return min(value, 77)
+
+    print("Calculating base scores and applying calibration & caps...")
+    agg_df['score'] = agg_df.apply(get_base_score, axis=1)
+    agg_df['score'] = agg_df.apply(calibrate_score, axis=1)
+    agg_df['score'] = agg_df.apply(lambda x: apply_max_cap(x['score'], x['player_type'], x['match_format']), axis=1)
 
     # 4. Improved Clustering (StandardScaler + Performance Features)
     # Using quality features ONLY
@@ -94,8 +166,23 @@ def build_refined_pipeline():
     agg_df['levels'] = agg_df['cluster'].map({c_means[0]: 0, c_means[1]: 1, c_means[2]: 2})
 
     # 5. Top 16 Benchmarking Overall (Percent)
-    max_score = agg_df["score"].max()
-    agg_df["percent"] = (agg_df["score"] / max_score) * 100
+    agg_df["percent"] = agg_df["score"] 
+    max_score = agg_df["score"].max() # Still needed for some legacy compatibility maybe, but percent is now absolute
+
+    def apply_role_caps(value, role, fmt):
+        if fmt == "Test":
+            if role in ['Batsman']:
+                return min(value, 70) # Target range 58-70 as requested
+            elif role == 'Bowler':
+                return min(value, 72)
+            else:
+                return min(value, 74)
+
+        elif fmt == "ODI":
+            return min(value, 78)
+
+        else:  # T20
+            return min(value, 80)
 
     benchmarks = {}
     roles = agg_df["player_type"].unique()
@@ -108,10 +195,16 @@ def build_refined_pipeline():
                 (agg_df["match_format"] == f)
             ]
             
-            top16 = filtered.sort_values(by="percent", ascending=False).head(16)
-            
-            if len(top16) > 0:
-                avg_percent = top16["percent"].mean()
+            if len(filtered) > 0:
+                # Step 2 & 3: Cap elite influence and use hybrid median adjustment
+                filtered_scores = filtered["percent"].clip(upper=85)
+                q75 = filtered_scores.quantile(0.75)
+                median = filtered_scores.median()
+                
+                avg_percent = (q75 * 0.6) + (median * 0.4)
+                
+                # Step 4: Apply Hard Role Caps
+                avg_percent = apply_role_caps(avg_percent, r, f)
             else:
                 avg_percent = 0
                 

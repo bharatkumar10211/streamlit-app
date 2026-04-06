@@ -168,15 +168,69 @@ if st.button("🚀 EXECUTE AI SELECTION ANALYSIS"):
         norm_hs = min(hs, 120) / 1.2
         norm_avg = min(avg, 60) * 1.66
         
-        if role in ['Batsman', 'Wicketkeeper']:
-            score = (norm_avg * 0.35) + (norm_sr * 0.25) + (norm_last5 * 0.30) + (norm_hs * 0.10)
+        # Test Specific Logic: Reward Patience (Balls Faced)
+        if role in ['Batsman', 'Wicketkeeper'] and format_type == 'Test':
+            balls_per_innings = balls / innings if innings > 0 else 0
+            n_avg = min(avg, 60) / 60
+            n_balls = min(balls_per_innings, 120) / 120
+            n_last5 = min(last5, 250) / 250
+            n_hs = min(hs, 150) / 150
+            base = ((n_avg * 0.35) + (n_balls * 0.30) + (n_last5 * 0.20) + (n_hs * 0.15)) * 100
+        elif role in ['Batsman', 'Wicketkeeper']:
+            base = (norm_avg * 0.35) + (norm_sr * 0.25) + (norm_last5 * 0.30) + (norm_hs * 0.10)
         elif role == 'Bowler':
-            score = (min(wickets, 50) * 0.8) + (max(15 - econ, 0) * 2.66) + (norm_last5 * 0.2)
+            base = (min(wickets, 50) * 0.8) + (max(15 - econ, 0) * 2.66) + (norm_last5 * 0.2)
         else: # All rounder
-            score = (norm_avg * 0.2) + (norm_sr * 0.15) + (norm_last5 * 0.2) + (min(wickets, 20) * 2.5)
+            base = (norm_avg * 0.2) + (norm_sr * 0.15) + (norm_last5 * 0.2) + (min(wickets, 20) * 2.5)
+
+        # Apply Dynamic Role-Based Calibration
+        fmt = format_type
+        if fmt == 'T20':
+            if role in ['Batsman', 'Wicketkeeper']:
+                player_percent = (base * 0.90) + 10
+            elif role == 'Bowler':
+                player_percent = (base * 0.85) + 12
+            else:  # All-Rounder
+                player_percent = (base * 0.88) + 11
+        elif fmt == 'ODI':
+            if role in ['Batsman', 'Wicketkeeper']:
+                player_percent = (base * 0.85) + 8
+            elif role == 'Bowler':
+                player_percent = (base * 0.80) + 10
+            else:
+                player_percent = (base * 0.83) + 9
+        else: # TEST
+            if role in ['Batsman', 'Wicketkeeper']:
+                player_percent = (base * 0.80) + 12
+            elif role == 'Bowler':
+                player_percent = (base * 0.75) + 15
+            else:
+                player_percent = (base * 0.78) + 13
+
+        # Apply Hard Max Caps per Role
+        if fmt == "T20":
+            if role in ['Batsman', 'Wicketkeeper']:
+                player_percent = min(player_percent, 85)
+            elif role == 'Bowler':
+                player_percent = min(player_percent, 82)
+            else:
+                player_percent = min(player_percent, 84)
+        elif fmt == "ODI":
+            if role in ['Batsman', 'Wicketkeeper']:
+                player_percent = min(player_percent, 80)
+            elif role == 'Bowler':
+                player_percent = min(player_percent, 78)
+            else:
+                player_percent = min(player_percent, 79)
+        else: # Test
+            if role in ['Batsman', 'Wicketkeeper']:
+                player_percent = min(player_percent, 78)
+            elif role == 'Bowler':
+                player_percent = min(player_percent, 76)
+            else:
+                player_percent = min(player_percent, 77)
 
         bench_val = benchmarks.get((format_type, role), 50.0)
-        player_percent = (score / max_score) * 100
         
         if player_percent >= bench_val:
             label, color = "🌟 SELECTED", "#22c55e"
@@ -330,7 +384,10 @@ if st.button("🚀 EXECUTE AI SELECTION ANALYSIS"):
                     st.info("Intelligence clustering analysis complete.")
 
         st.divider()
-        st.info("The AI weights **Recent Form (35%)** and **Batting Strike Rate (25%)** as the most critical features for this selection verdict.")
+        if format_type == 'Test':
+            st.info("For **Test Selection**, the AI prioritizes **Average (35%)** and **Stability / Balls Faced per Innings (30%)** as the most critical features.")
+        else:
+            st.info("The AI weights **Average (35%)** and **Recent Form (30%)** as the most critical features for this selection verdict in T20/ODI.")
         if os.path.exists("assets/pca_clusters.png"):
             with st.expander("🔍 View Global Performance Reference Map"):
                 st.image("assets/pca_clusters.png", caption="Historical Performance Distribution")
