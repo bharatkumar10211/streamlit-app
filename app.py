@@ -223,6 +223,8 @@ if st.button("🚀 EXECUTE AI SELECTION ANALYSIS"):
         # ================= FINAL LABEL (Clean & Filtered) =================
         if reject_flag:
             label, color = "❌ NOT SELECTED", "#ef4444"
+        elif role == "Bowler" and econ < 4 and bowl_avg < 20 and wickets > 0:
+            label, color = "🌟 SELECTED", "#22c55e"
         elif player_percentile >= 70:
             label, color = "🌟 SELECTED", "#22c55e"
         elif player_percentile >= 55:
@@ -369,6 +371,8 @@ if st.button("🚀 EXECUTE AI SELECTION ANALYSIS"):
                     # Meaning interpretation
                     if reject_flag:
                         st.error("Player rejected due to poor core performance metrics")
+                    elif role == "Bowler" and econ < 4 and bowl_avg < 20 and wickets > 0:
+                        st.success("Elite efficiency override: Exceptional economy and average")
                     elif player_percentile >= 70:
                         st.success("Player is in the Elite cluster")
                     elif player_percentile >= 55:
