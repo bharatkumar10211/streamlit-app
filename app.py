@@ -192,15 +192,15 @@ if st.button("🚀 EXECUTE AI SELECTION ANALYSIS"):
 
             # ================= EXACT MATCH SCORING (FIX FOR PERCENTILE BUG) =================
             if role == "Bowler":
-                player_score = (wickets * 1.5) + ((10 - econ) * 3) + ((50 - bowl_avg) * 1.5)
+                player_score = (wickets / 20) * 40 + ((10 - econ) / 10) * 30 + ((50 - bowl_avg) / 50) * 30
             elif role == "Batsman":
-                player_score = (avg - 30) * 2 + (sr - 120) * 1.5 + (last5 - 150) * 0.5 + (hs - 50) * 0.3
+                player_score = (avg / 60) * 40 + (sr / 180) * 30 + (last5 / 250) * 20 + (hs / 150) * 10
             elif role == "All-Rounder":
-                bat = (avg - 30) * 1.5 + (sr - 120) * 1.0
-                bowl = (wickets * 1.5) + (10 - econ) * 2
+                bat = (avg / 60) * 50 + (sr / 180) * 50
+                bowl = (wickets / 20) * 50 + ((10 - econ) / 10) * 50
                 player_score = (bat + bowl) * 0.5
             else: # Wicketkeeper
-                player_score = (avg - 30) * 1.5 + (sr - 120) * 1.0 + (total_dismissals - 20) * 1.2
+                player_score = (avg / 60) * 40 + (sr / 180) * 40 + (total_dismissals / 30) * 20
 
             # ================= DATASET PERCENTILE CALCULATION =================
             df_full = pd.read_csv("final_player_scores.csv")

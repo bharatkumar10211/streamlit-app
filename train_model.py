@@ -66,15 +66,15 @@ def build_refined_pipeline():
         role = row['player_type']
 
         if role == "Batsman":
-            s = (avg - 30) * 2 + (sr - 120) * 1.5 + (last5 - 150) * 0.5 + (hs - 50) * 0.3
+            s = (avg / 60) * 40 + (sr / 180) * 30 + (last5 / 250) * 20 + (hs / 150) * 10
         elif role == "Bowler":
-            s = (wickets * 1.5) + (10 - econ) * 3 + (50 - bowl_avg) * 1.5
+            s = (wickets / 20) * 40 + ((10 - econ) / 10) * 30 + ((50 - bowl_avg) / 50) * 30
         elif role == "All-Rounder":
-            bat = (avg - 30) * 1.5 + (sr - 120) * 1.0
-            bowl = (wickets * 1.5) + (10 - econ) * 2
-            s = (bat + bowl) * 0.5
+            bat = (avg / 60) * 50 + (sr / 180) * 50
+            bowl = (wickets / 20) * 50 + ((10 - econ) / 10) * 50
+            s = (bat * 0.5) + (bowl * 0.5)
         else: # Wicketkeeper
-            s = (avg - 30) * 1.5 + (sr - 120) * 1.0 + (dismissals - 20) * 1.2
+            s = (avg / 60) * 40 + (sr / 180) * 40 + (dismissals / 30) * 20
         
         return s # Raw score with penalties
 
