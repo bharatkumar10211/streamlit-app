@@ -10,7 +10,6 @@ from utils.encoder import encode_role,encode_format
 import os
 
 model_path = os.path.join("model", "selection_model.pkl")
-model = joblib.load(model_path)
 
 plt.style.use("dark_background")
 
@@ -173,20 +172,8 @@ if st.button("🚀 EXECUTE AI SELECTION ANALYSIS"):
         except NameError:
             balls_per_innings = 0
 
-        # ================= HYBRID SCORING =================
-        # 1. Prepare input (batting base)
-        input_features = np.array([[avg, sr, last5, hs]])
-
         try:
-            scaler = joblib.load("model/scaler.pkl")
-            input_scaled = scaler.transform(input_features)
 
-            proba = model.predict_proba(input_scaled)[0]
-
-            # Better weighted score (Elite=95, Avg=75, Low=50)
-            model_score = (proba[0] * 50) + (proba[1] * 75) + (proba[2] * 95)
-
-            # 2. Benchmark usage removed as per Step 2.1
 
             # ================= HARD FILTERS (Step 2 & 7) =================
             reject_flag = False
@@ -203,74 +190,28 @@ if st.button("🚀 EXECUTE AI SELECTION ANALYSIS"):
                 if avg < 20 and total_dismissals < 10:
                     reject_flag = True
 
-            # ================= ROLE BOOST (PENALTY BASED) =================
-            role_boost = 0
+            # ================= EXACT MATCH SCORING (FIX FOR PERCENTILE BUG) =================
             if role == "Bowler":
-                wicket_score = wickets * 1.5
-                econ_score = (10 - econ) * 3          # penalty included
-                avg_score = (50 - bowl_avg) * 1.5     # penalty included
-                role_boost = (wicket_score + econ_score + avg_score) * 0.2
-
-            elif role == "All-Rounder":
-                bat_part = (avg - 30) * 1.5 + (sr - 120) * 1.0
-                bowl_part = (wickets * 1.5) + ((10 - econ) * 2)
-                balance_penalty = abs(bat_part - bowl_part) * 0.3
-                role_boost = (bat_part + bowl_part - balance_penalty) * 0.15
-
-            elif role == "Wicketkeeper":
-                bat_score = (avg - 30) * 1.5 + (sr - 120) * 1.0
-                keeping_score = (total_dismissals - 20) * 1.2
-                role_boost = (bat_score + keeping_score) * 0.1
-
+                player_score = (wickets * 1.5) + ((10 - econ) * 3) + ((50 - bowl_avg) * 1.5)
             elif role == "Batsman":
-                avg_score = (avg - 30) * 2            # below 30 → penalty
-                sr_score = (sr - 120) * 1.5           # below 120 → penalty
-                form_score = (last5 - 150) * 0.5      # poor form → penalty
-                hs_score = (hs - 50) * 0.3            # low impact → penalty
-                role_boost = (avg_score + sr_score + form_score + hs_score) * 0.1
+                player_score = (avg - 30) * 2 + (sr - 120) * 1.5 + (last5 - 150) * 0.5 + (hs - 50) * 0.3
+            elif role == "All-Rounder":
+                bat = (avg - 30) * 1.5 + (sr - 120) * 1.0
+                bowl = (wickets * 1.5) + (10 - econ) * 2
+                player_score = (bat + bowl) * 0.5
+            else: # Wicketkeeper
+                player_score = (avg - 30) * 1.5 + (sr - 120) * 1.0 + (total_dismissals - 20) * 1.2
 
-            # Safety cap for role_boost
-            role_boost = max(min(role_boost, 30), -30)
-
-            # ================= HYBRID FINAL (Penalty Enabled) =================
-            player_score = (0.7 * model_score) + (0.3 * role_boost)
-            player_score = max(min(player_score, 100), 0) # Normalization
-
-            # ================= DATASET COMPARISON (Fixed to use Aggr Dataset) =================
+            # ================= DATASET PERCENTILE CALCULATION =================
             df_full = pd.read_csv("final_player_scores.csv")
-            df = df_full[(df_full["player_type"] == role) & (df_full["match_format"] == format_type)].copy()
+            df = df_full[(df_full["player_type"] == role) & (df_full["match_format"] == format_type)]
 
-            def compute_score_internal(row_data, player_role):
-                avg_val = row_data.get("avg", 0)
-                sr_val = row_data.get("sr", 0)
-                wickets_val = row_data.get("wickets", 0)
-                econ_val = row_data.get("econ", 0)
-                bowl_avg_val = row_data.get("bowl_avg", 0)
-                last5_val = row_data.get("last5_runs", 0)
-                hs_val = row_data.get("high_score", 0)
+            st.write("---")
+            st.write(f"**Diagnostic View** -> Player Score: `{player_score:.2f}` | Dataset Avg Score: `{df['score'].mean():.2f}`")
 
-                if player_role == "Batsman":
-                    return (avg_val - 30) * 2 + (sr_val - 120) * 1.5 + (last5_val - 150) * 0.5 + (hs_val - 50) * 0.3
-                elif player_role == "Bowler":
-                    return (wickets_val * 1.5) + (10 - econ_val) * 3 + (50 - bowl_avg_val) * 1.5
-                elif player_role == "All-Rounder":
-                    bat = (avg_val - 30) * 1.5 + (sr_val - 120) * 1.0
-                    bowl = (wickets_val * 1.5) + (10 - econ_val) * 2
-                    return (bat + bowl) * 0.5
-                else: # Wicketkeeper
-                    dismissals_val = row_data.get("catches", 0) + row_data.get("stumpings", 0)
-                    return (avg_val - 30) * 1.5 + (sr_val - 120) * 1.0 + (dismissals_val - 20) * 1.2
-
-            # Compute dataset scores
-            df["stat_score"] = df.apply(lambda r: compute_score_internal(r, role), axis=1)
-            
-            # Scale dataset scores to be comparable with the hybrid player_score (0.7 * 75 average model score + 0.3 * stat)
-            df["hybrid_score_calc"] = (0.7 * 75) + (0.3 * df["stat_score"])
-            
-            # Compute percentile rank (MAIN LOGIC)
+            # Compute percentile rank EXACTLY matched against df["score"]
             if not df.empty:
-                # Compare hybrid vs hybrid for fair ranking
-                player_percentile = (df["hybrid_score_calc"] < player_score).mean() * 100
+                player_percentile = (df["score"] < player_score).mean() * 100
             else:
                 player_percentile = 50.0 
 
@@ -282,11 +223,11 @@ if st.button("🚀 EXECUTE AI SELECTION ANALYSIS"):
         # ================= FINAL LABEL (Clean & Filtered) =================
         if reject_flag:
             label, color = "❌ NOT SELECTED", "#ef4444"
-        elif player_percentile >= 80:
+        elif player_percentile >= 70:
             label, color = "🌟 SELECTED", "#22c55e"
-        elif player_percentile >= 65:
+        elif player_percentile >= 55:
             label, color = "👍 RECOMMENDED", "#3b82f6"
-        elif player_percentile >= 45:
+        elif player_percentile >= 40:
             label, color = "⚠️ AVERAGE", "#facc15"
         else:
             label, color = "❌ NOT SELECTED", "#ef4444"
@@ -428,9 +369,9 @@ if st.button("🚀 EXECUTE AI SELECTION ANALYSIS"):
                     # Meaning interpretation
                     if reject_flag:
                         st.error("Player rejected due to poor core performance metrics")
-                    elif player_percentile >= 80:
+                    elif player_percentile >= 70:
                         st.success("Player is in the Elite cluster")
-                    elif player_percentile >= 65:
+                    elif player_percentile >= 55:
                         st.info("Player is in the Recommended cluster")
                     else:
                         st.warning("Player is in the Average or below cluster")
