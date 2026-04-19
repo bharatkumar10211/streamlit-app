@@ -62,12 +62,8 @@ st.markdown("""
 st.title("🏏 Premium Cricket Squad AI")
 status_placeholder = st.empty()
 st.write("---")
-try:
-    benchmarks = joblib.load("model/benchmarks.pkl")
-    max_score = joblib.load("model/max_score.pkl")
-except:
-    benchmarks = {}
-    max_score = 100.0
+# Benchmarks removed in favor of percentile-based selection
+# max_score removed as per Step 1 instruction
 
 # Top Level Selectors (Mobile Responsive)
 c1, c2 = st.columns(2)
@@ -111,9 +107,10 @@ with st.expander("📊 Enter Player Performance Metrics", expanded=True):
         sr_auto = (runs / balls) * 100 if balls > 0 else 0.0
         
         # Automatically synced sliders with extremely high limits
+        # Realistic slider limits as per Step 1
         st.write("---")
-        final_avg = st.slider("Average (Auto-Calculated Slider)", 0.0, 600.0, value=float(min(avg_auto, 600.0)))
-        final_sr = st.slider("Strike Rate (Auto-Calculated Slider)", 0.0, 600.0, value=float(min(sr_auto, 600.0)))
+        final_avg = st.slider("Average (Auto-Calculated Slider)", 0.0, 60.0, value=float(min(avg_auto, 60.0)))
+        final_sr = st.slider("Strike Rate (Auto-Calculated Slider)", 0.0, 200.0, value=float(min(sr_auto, 200.0)))
         
         batting_stats.update({'avg': final_avg, 'sr': final_sr, 'last5': last5, 'hs': hs})
 
@@ -132,8 +129,9 @@ with st.expander("📊 Enter Player Performance Metrics", expanded=True):
         bowl_avg_auto = runs_conceded / wickets if wickets > 0 else 0.0
 
         # Automated Bowling Sliders
-        final_econ = st.slider("Economy Rate", 0.0, 30.0, value=float(min(econ_auto, 30.0)))
-        final_avg_bowl = st.slider("Bowling Average", 0.0, 200.0, value=float(min(bowl_avg_auto, 200.0)))
+        # Realistic bowling limits
+        final_econ = st.slider("Economy Rate", 0.0, 12.0, value=float(min(econ_auto, 12.0)))
+        final_avg_bowl = st.slider("Bowling Average", 0.0, 60.0, value=float(min(bowl_avg_auto, 60.0)))
         
         bowling_stats.update({'wickets': wickets, 'econ': final_econ, 'bowl_avg': final_avg_bowl})
 
@@ -158,85 +156,137 @@ if st.button("🚀 EXECUTE AI SELECTION ANALYSIS"):
         # Clear any previous errors
         status_placeholder.empty()
         
-        # Results Area logic (Proceed only if validated)
+        # ================= FEATURE PREPARATION =================
         avg, sr, last5, hs = batting_stats['avg'], batting_stats['sr'], batting_stats['last5'], batting_stats['hs']
         wickets, econ = bowling_stats['wickets'], bowling_stats['econ']
-
-        # Performance normalization (Model Pipeline)
-        norm_sr = min(sr, 200) / 2
-        norm_last5 = min(last5, 250) / 2.5
-        norm_hs = min(hs, 120) / 1.2
-        norm_avg = min(avg, 60) * 1.66
+        bowl_avg = bowling_stats['bowl_avg']
         
-        # Test Specific Logic: Reward Patience (Balls Faced)
-        if role in ['Batsman', 'Wicketkeeper'] and format_type == 'Test':
-            balls_per_innings = balls / innings if innings > 0 else 0
-            n_avg = min(avg, 60) / 60
-            n_balls = min(balls_per_innings, 120) / 120
-            n_last5 = min(last5, 250) / 250
-            n_hs = min(hs, 150) / 150
-            base = ((n_avg * 0.35) + (n_balls * 0.30) + (n_last5 * 0.20) + (n_hs * 0.15)) * 100
-        elif role in ['Batsman', 'Wicketkeeper']:
-            base = (norm_avg * 0.35) + (norm_sr * 0.25) + (norm_last5 * 0.30) + (norm_hs * 0.10)
-        elif role == 'Bowler':
-            base = (min(wickets, 50) * 0.8) + (max(15 - econ, 0) * 2.66) + (norm_last5 * 0.2)
-        else: # All rounder
-            base = (norm_avg * 0.2) + (norm_sr * 0.15) + (norm_last5 * 0.2) + (min(wickets, 20) * 2.5)
+        # Safe access to variabels that might be role-specific
+        try:
+            total_dismissals = (dismissals if 'dismissals' in locals() else 0) + (stumpings if 'stumpings' in locals() else 0)
+        except NameError:
+            total_dismissals = 0
 
-        # Apply Dynamic Role-Based Calibration
-        fmt = format_type
-        if fmt == 'T20':
-            if role in ['Batsman', 'Wicketkeeper']:
-                player_percent = (base * 0.90) + 10
-            elif role == 'Bowler':
-                player_percent = (base * 0.85) + 12
-            else:  # All-Rounder
-                player_percent = (base * 0.88) + 11
-        elif fmt == 'ODI':
-            if role in ['Batsman', 'Wicketkeeper']:
-                player_percent = (base * 0.85) + 8
-            elif role == 'Bowler':
-                player_percent = (base * 0.80) + 10
-            else:
-                player_percent = (base * 0.83) + 9
-        else: # TEST
-            if role in ['Batsman', 'Wicketkeeper']:
-                player_percent = (base * 0.80) + 12
-            elif role == 'Bowler':
-                player_percent = (base * 0.75) + 15
-            else:
-                player_percent = (base * 0.78) + 13
+        try:
+            balls_val = balls if 'balls' in locals() else 0
+            balls_per_innings = balls_val / innings if (innings > 0 and 'balls' in locals()) else 0
+        except NameError:
+            balls_per_innings = 0
 
-        # Apply Hard Max Caps per Role
-        if fmt == "T20":
-            if role in ['Batsman', 'Wicketkeeper']:
-                player_percent = min(player_percent, 85)
-            elif role == 'Bowler':
-                player_percent = min(player_percent, 82)
-            else:
-                player_percent = min(player_percent, 84)
-        elif fmt == "ODI":
-            if role in ['Batsman', 'Wicketkeeper']:
-                player_percent = min(player_percent, 80)
-            elif role == 'Bowler':
-                player_percent = min(player_percent, 78)
-            else:
-                player_percent = min(player_percent, 79)
-        else: # Test
-            if role in ['Batsman', 'Wicketkeeper']:
-                player_percent = min(player_percent, 78)
-            elif role == 'Bowler':
-                player_percent = min(player_percent, 76)
-            else:
-                player_percent = min(player_percent, 77)
+        # ================= HYBRID SCORING =================
+        # 1. Prepare input (batting base)
+        input_features = np.array([[avg, sr, last5, hs]])
 
-        bench_val = benchmarks.get((format_type, role), 50.0)
-        
-        if player_percent >= bench_val:
+        try:
+            scaler = joblib.load("model/scaler.pkl")
+            input_scaled = scaler.transform(input_features)
+
+            proba = model.predict_proba(input_scaled)[0]
+
+            # Better weighted score (Elite=95, Avg=75, Low=50)
+            model_score = (proba[0] * 50) + (proba[1] * 75) + (proba[2] * 95)
+
+            # 2. Benchmark usage removed as per Step 2.1
+
+            # ================= HARD FILTERS (Step 2 & 7) =================
+            reject_flag = False
+            if role == "Batsman":
+                if avg < 20 or sr < 100:
+                    reject_flag = True
+            elif role == "Bowler":
+                if econ > 10 or bowl_avg > 45:
+                    reject_flag = True
+            elif role == "All-Rounder":
+                if avg < 20 and wickets < 5:
+                    reject_flag = True
+            elif role == "Wicketkeeper":
+                if avg < 20 and total_dismissals < 10:
+                    reject_flag = True
+
+            # ================= ROLE BOOST (PENALTY BASED) =================
+            role_boost = 0
+            if role == "Bowler":
+                wicket_score = wickets * 1.5
+                econ_score = (10 - econ) * 3          # penalty included
+                avg_score = (50 - bowl_avg) * 1.5     # penalty included
+                role_boost = (wicket_score + econ_score + avg_score) * 0.2
+
+            elif role == "All-Rounder":
+                bat_part = (avg - 30) * 1.5 + (sr - 120) * 1.0
+                bowl_part = (wickets * 1.5) + ((10 - econ) * 2)
+                balance_penalty = abs(bat_part - bowl_part) * 0.3
+                role_boost = (bat_part + bowl_part - balance_penalty) * 0.15
+
+            elif role == "Wicketkeeper":
+                bat_score = (avg - 30) * 1.5 + (sr - 120) * 1.0
+                keeping_score = (total_dismissals - 20) * 1.2
+                role_boost = (bat_score + keeping_score) * 0.1
+
+            elif role == "Batsman":
+                avg_score = (avg - 30) * 2            # below 30 → penalty
+                sr_score = (sr - 120) * 1.5           # below 120 → penalty
+                form_score = (last5 - 150) * 0.5      # poor form → penalty
+                hs_score = (hs - 50) * 0.3            # low impact → penalty
+                role_boost = (avg_score + sr_score + form_score + hs_score) * 0.1
+
+            # Safety cap for role_boost
+            role_boost = max(min(role_boost, 30), -30)
+
+            # ================= HYBRID FINAL (Penalty Enabled) =================
+            player_score = (0.7 * model_score) + (0.3 * role_boost)
+            player_score = max(min(player_score, 100), 0) # Normalization
+
+            # ================= DATASET COMPARISON (Fixed to use Aggr Dataset) =================
+            df_full = pd.read_csv("final_player_scores.csv")
+            df = df_full[(df_full["player_type"] == role) & (df_full["match_format"] == format_type)].copy()
+
+            def compute_score_internal(row_data, player_role):
+                avg_val = row_data.get("avg", 0)
+                sr_val = row_data.get("sr", 0)
+                wickets_val = row_data.get("wickets", 0)
+                econ_val = row_data.get("econ", 0)
+                bowl_avg_val = row_data.get("bowl_avg", 0)
+                last5_val = row_data.get("last5_runs", 0)
+                hs_val = row_data.get("high_score", 0)
+
+                if player_role == "Batsman":
+                    return (avg_val - 30) * 2 + (sr_val - 120) * 1.5 + (last5_val - 150) * 0.5 + (hs_val - 50) * 0.3
+                elif player_role == "Bowler":
+                    return (wickets_val * 1.5) + (10 - econ_val) * 3 + (50 - bowl_avg_val) * 1.5
+                elif player_role == "All-Rounder":
+                    bat = (avg_val - 30) * 1.5 + (sr_val - 120) * 1.0
+                    bowl = (wickets_val * 1.5) + (10 - econ_val) * 2
+                    return (bat + bowl) * 0.5
+                else: # Wicketkeeper
+                    dismissals_val = row_data.get("catches", 0) + row_data.get("stumpings", 0)
+                    return (avg_val - 30) * 1.5 + (sr_val - 120) * 1.0 + (dismissals_val - 20) * 1.2
+
+            # Compute dataset scores
+            df["stat_score"] = df.apply(lambda r: compute_score_internal(r, role), axis=1)
+            
+            # Scale dataset scores to be comparable with the hybrid player_score (0.7 * 75 average model score + 0.3 * stat)
+            df["hybrid_score_calc"] = (0.7 * 75) + (0.3 * df["stat_score"])
+            
+            # Compute percentile rank (MAIN LOGIC)
+            if not df.empty:
+                # Compare hybrid vs hybrid for fair ranking
+                player_percentile = (df["hybrid_score_calc"] < player_score).mean() * 100
+            else:
+                player_percentile = 50.0 
+
+        except Exception as e:
+            st.error(f"Error in calculation: {e}")
+            player_percentile = 0.0
+
+        # ================= FINAL LABEL =================
+        # ================= FINAL LABEL (Clean & Filtered) =================
+        if reject_flag:
+            label, color = "❌ NOT SELECTED", "#ef4444"
+        elif player_percentile >= 80:
             label, color = "🌟 SELECTED", "#22c55e"
-        elif player_percent >= bench_val * 0.85:
+        elif player_percentile >= 65:
             label, color = "👍 RECOMMENDED", "#3b82f6"
-        elif player_percent >= bench_val * 0.60:
+        elif player_percentile >= 45:
             label, color = "⚠️ AVERAGE", "#facc15"
         else:
             label, color = "❌ NOT SELECTED", "#ef4444"
@@ -249,8 +299,7 @@ if st.button("🚀 EXECUTE AI SELECTION ANALYSIS"):
     <h4 style='color: #cbd5f5; margin-bottom: 10px;'>Selection Verdict</h4>
     <h1 style='color: {color}; font-size: 3.2rem; margin: 0;'>{label}</h1>
     <p style='color: #94a3b8; font-size: 1.1rem;'>
-        AI Score: <b style='color:white;'>{player_percent:.1f}%</b> /
-        Standard: <b style='color:white;'>{bench_val:.1f}%</b>
+        Percentile Rank: <b style='color:white;'>{player_percentile:.1f}%</b>
     </p>
     <div style='display: flex; justify-content: space-around; background: #0f172a; padding: 15px; border-radius: 12px; margin: 20px 0;'>
         <div style='text-align: center;'>
@@ -262,9 +311,9 @@ if st.button("🚀 EXECUTE AI SELECTION ANALYSIS"):
             <b style='font-size: 1.5rem; color:white;'>{hs}</b>
         </div>
         <div style='text-align: center;'>
-            <span style='color: #94a3b8; font-size: 0.9rem;'>PROBABILITY</span><br>
+            <span style='color: #94a3b8; font-size: 0.9rem;'>CONFIDENCE</span><br>
             <b style='color: {color}; font-size: 1.5rem;'>
-                {min(player_percent/bench_val*100 if bench_val > 0 else 0, 100):.1f}%
+                {player_percentile:.1f}%
             </b>
         </div>
     </div>
@@ -272,14 +321,15 @@ if st.button("🚀 EXECUTE AI SELECTION ANALYSIS"):
 """, unsafe_allow_html=True)
 
             # --- 1. Selection Probability (Top Header) ---
-            prob_val = min(player_percent/bench_val*100 if bench_val > 0 else 0, 100)
+            prob_val = player_percentile
             fig_gauge = go.Figure(go.Indicator(
                 mode="gauge+number", value=prob_val,
-                title={'text': "Selection Probability (%)", 'font': {'size': 18}},
+                title={'text': "Percentile Rank (%)", 'font': {'size': 18}},
                 gauge={'axis': {'range': [None, 100]}, 'bar': {'color': color}, 'steps': [
-                    {'range': [0, 60], 'color': '#f8d7da'},
-                    {'range': [60, 85], 'color': '#fff3cd'},
-                    {'range': [85, 100], 'color': '#d4edda'}
+                    {'range': [0, 40], 'color': '#ef4444'},
+                    {'range': [40, 60], 'color': '#facc15'},
+                    {'range': [60, 75], 'color': '#3b82f6'},
+                    {'range': [75, 100], 'color': '#22c55e'}
                 ]}
             ))
             fig_gauge.update_layout(height=260, margin=dict(l=20, r=20, t=50, b=20))
@@ -327,7 +377,7 @@ if st.button("🚀 EXECUTE AI SELECTION ANALYSIS"):
                     elif x > 48 and y > 48: return "ABOVE AVG", "info"
                     else: return "BELOW AVG", "error"
 
-                user_x, user_y = player_percent, (last5/2.5 + hs)/2.0
+                user_x, user_y = player_percentile, (last5/2.5 + hs)/2.0
                 z_lab, z_typ = classify_zone(user_x, user_y)
                 st.markdown(f"<div style='text-align: center; background: #f8f9fa; padding: 5px; border-radius: 5px; border-left: 5px solid {color}; margin-bottom: 15px;'><b>{z_lab} ZONE</b></div>", unsafe_allow_html=True)
 
@@ -340,7 +390,7 @@ if st.button("🚀 EXECUTE AI SELECTION ANALYSIS"):
                         y = df["batting_strike_rate"]
                         xlabel = "Runs"
                         ylabel = "Strike Rate"
-                        highlight_x = runs
+                        highlight_x = (runs if 'runs' in locals() else 0)
                         highlight_y = sr
                     elif role == "Bowler":
                         x = df["wickets"]
@@ -354,7 +404,7 @@ if st.button("🚀 EXECUTE AI SELECTION ANALYSIS"):
                         y = df["wickets"]
                         xlabel = "Runs"
                         ylabel = "Wickets"
-                        highlight_x = runs
+                        highlight_x = (runs if 'runs' in locals() else 0)
                         highlight_y = wickets
                     
                     fig_cluster, ax_cluster = plt.subplots(figsize=(4, 4))
@@ -376,18 +426,43 @@ if st.button("🚀 EXECUTE AI SELECTION ANALYSIS"):
                     st.pyplot(fig_cluster)
                     
                     # Meaning interpretation
-                    if player_percent > bench_val:
-                        st.success("Player is above average cluster")
+                    if reject_flag:
+                        st.error("Player rejected due to poor core performance metrics")
+                    elif player_percentile >= 80:
+                        st.success("Player is in the Elite cluster")
+                    elif player_percentile >= 65:
+                        st.info("Player is in the Recommended cluster")
                     else:
-                        st.error("Player is below average cluster")
+                        st.warning("Player is in the Average or below cluster")
                 except Exception as e:
                     st.info("Intelligence clustering analysis complete.")
 
+            # --- 4. Explanation System ---
+            st.write("---")
+            st.subheader("📌 Selection Reasons")
+            reasons = []
+            if not reject_flag:
+                if avg > 40: reasons.append("Strong batting average")
+                if sr > 130: reasons.append("High strike rate")
+                if role == "Bowler" and econ < 7: reasons.append("Excellent economy rate")
+                if role == "Bowler" and wickets > 15: reasons.append("Good wicket-taking ability")
+                if player_percentile > 75: reasons.append("Top percentile performer")
+                if role == "All-Rounder" and abs((avg-30)*1.5 - (wickets*1.5)) < 10: reasons.append("Highly balanced all-round capability")
+                
+                if not reasons: reasons.append("Consistent performance across primary metrics")
+            else:
+                if role == "Batsman" and avg < 20: reasons.append("Extremely low batting average")
+                if role == "Batsman" and sr < 100: reasons.append("Below par strike rate")
+                if role == "Bowler" and econ > 10: reasons.append("High economy rate")
+                if role == "Bowler" and bowl_avg > 45: reasons.append("Poor bowling average")
+                if role == "All-Rounder" and avg < 20: reasons.append("Weak batting contribution")
+                if role == "Wicketkeeper" and total_dismissals < 10: reasons.append("Low stumping/catch impact")
+
+            for r in reasons:
+                st.write(f"- {r}")
+
         st.divider()
-        if format_type == 'Test':
-            st.info("For **Test Selection**, the AI prioritizes **Average (35%)** and **Stability / Balls Faced per Innings (30%)** as the most critical features.")
-        else:
-            st.info("The AI weights **Average (35%)** and **Recent Form (30%)** as the most critical features for this selection verdict in T20/ODI.")
+        st.info("🚀 **Dataset-Driven Selection Engine**: This verdict is calculated by comparing your **Final AI Score** against the historical performance of all players in this category using **Percentile Ranks**.")
         if os.path.exists("assets/pca_clusters.png"):
             with st.expander("🔍 View Global Performance Reference Map"):
                 st.image("assets/pca_clusters.png", caption="Historical Performance Distribution")
