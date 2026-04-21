@@ -56,27 +56,107 @@ def build_refined_pipeline():
     print("Engineering performance-oriented features...")
     agg_df = raw_df.groupby(['player_name', 'player_type', 'match_format']).apply(get_player_enhanced_stats).reset_index()
 
-    # 3. Refined Scoring Formula (Batsman centric as per Step 5)
-    # score = avg*0.35 + sr*0.25 (scaled) + last5*0.3 + hs*0.1
-    # We normalize internal components for a balanced score
+    # --- DYNAMIC ALL-ROUNDER CLASSIFICATION ---
+    def refine_player_type(row):
+        # If a Batsman bowls significantly, make them an All-Rounder
+        if row['player_type'] == 'Batsman' and row['wickets'] >= 3:
+            return 'All-Rounder'
+        # If a Bowler bats significantly, make them an All-Rounder
+        if row['player_type'] == 'Bowler' and row['runs'] >= 150 and row['avg'] >= 15:
+            return 'All-Rounder'
+        return row['player_type']
+
+    agg_df['player_type'] = agg_df.apply(refine_player_type, axis=1)
+
+    # 3. Refined Scoring Formula (Dynamic Normalization)
+    print("Calculating relative benchmark standards (Robust Percentiles)...")
+    cat_stats = agg_df.groupby(['player_type', 'match_format']).agg({
+        'avg': [lambda x: x.quantile(0.95)], 
+        'sr': [lambda x: x.quantile(0.95)], 
+        'last5_runs': [lambda x: x.quantile(0.95)], 
+        'high_score': [lambda x: x.quantile(0.95)],
+        'wickets': [lambda x: x.quantile(0.95)], 
+        'econ': [lambda x: x.quantile(0.90), lambda x: x.quantile(0.10)], 
+        'bowl_avg': [lambda x: x.quantile(0.90), lambda x: x.quantile(0.10)],
+        'catches': [lambda x: x.quantile(0.95)], 
+        'stumpings': [lambda x: x.quantile(0.95)]
+    })
+    
+    # Standardize column names: ('avg', '<lambda>') -> 'avg_max'
+    # We rename manually because lambda names are messy
+    cat_stats.columns = [
+        'avg_max', 'sr_max', 'last5_runs_max', 'high_score_max', 
+        'wickets_max', 'econ_max', 'econ_min', 'bowl_avg_max', 'bowl_avg_min',
+        'catches_max', 'stumpings_max'
+    ]
+    cat_stats = cat_stats.reset_index()
+    
+    # Properly merge stats
+    agg_df = agg_df.merge(cat_stats, on=['player_type', 'match_format'])
+
     def get_base_score(row):
         avg, sr, wickets, econ = row['avg'], row['sr'], row['wickets'], row['econ']
         bowl_avg, last5, hs = row['bowl_avg'], row['last5_runs'], row['high_score']
-        dismissals = row.get('catches', 0) + row.get('stumpings', 0)
+        dismissals = row.get('catches', 0)
         role = row['player_type']
+        fmt = row['match_format']
+        
+        # Stats for this row's category
+        max_avg, max_sr, max_wickets, max_econ = row['avg_max'], row['sr_max'], row['wickets_max'], row['econ_max']
+        min_econ = row['econ_min']
+        max_bowl_avg, min_bowl_avg = row['bowl_avg_max'], row['bowl_avg_min']
+        max_last5, max_hs = row['last5_runs_max'], row['high_score_max']
+        max_dismiss = row['catches_max']
+
+        # Helper to clip normalized values between 0 and 1
+        def norm(val, v_max):
+            return min(1.0, max(0.0, val / v_max)) if v_max > 0 else 0
+        
+        def inv_norm(val, v_max, v_min):
+            if v_max <= v_min: return 0.5
+            return min(1.0, max(0.0, (v_max - val) / (v_max - v_min)))
 
         if role == "Batsman":
-            s = (avg / 60) * 40 + (sr / 180) * 30 + (last5 / 250) * 20 + (hs / 150) * 10
+            n_avg, n_sr = norm(avg, max_avg), norm(sr, max_sr)
+            n_last5, n_hs = norm(last5, max_last5), norm(hs, max_hs)
+            if fmt == "T20":
+                s = (n_avg * 0.3 + n_sr * 0.4 + n_last5 * 0.2 + n_hs * 0.1) * 100
+            elif fmt == "ODI":
+                s = (n_avg * 0.5 + n_sr * 0.2 + n_last5 * 0.2 + n_hs * 0.1) * 100
+            else: # Test
+                s = (n_avg * 0.7 + n_last5 * 0.2 + n_hs * 0.1) * 100
+
         elif role == "Bowler":
-            s = (wickets / 20) * 40 + ((10 - econ) / 10) * 30 + ((50 - bowl_avg) / 50) * 30
+            n_wickets = norm(wickets, max_wickets)
+            n_econ, n_bavg = inv_norm(econ, max_econ, min_econ), inv_norm(bowl_avg, max_bowl_avg, min_bowl_avg)
+            if fmt == "T20":
+                s = (n_wickets * 0.4 + n_econ * 0.4 + n_bavg * 0.2) * 100
+            elif fmt == "ODI":
+                s = (n_wickets * 0.35 + n_econ * 0.35 + n_bavg * 0.3) * 100
+            else: # Test
+                s = (n_wickets * 0.3 + n_bavg * 0.5 + n_econ * 0.2) * 100
+
         elif role == "All-Rounder":
-            bat = (avg / 60) * 50 + (sr / 180) * 50
-            bowl = (wickets / 20) * 50 + ((10 - econ) / 10) * 50
-            s = (bat * 0.5) + (bowl * 0.5)
+            n_avg, n_sr = norm(avg, max_avg), norm(sr, max_sr)
+            n_wickets, n_econ = norm(wickets, max_wickets), inv_norm(econ, max_econ, min_econ)
+            if fmt == "T20":
+                s = (n_avg * 0.2 + n_sr * 0.3 + n_wickets * 0.3 + n_econ * 0.2) * 100
+            elif fmt == "ODI":
+                s = (n_avg * 0.3 + n_sr * 0.2 + n_wickets * 0.3 + n_econ * 0.2) * 100
+            else: # Test
+                s = (n_avg * 0.4 + n_wickets * 0.4 + n_econ * 0.1 + n_sr * 0.1) * 100
+
         else: # Wicketkeeper
-            s = (avg / 60) * 40 + (sr / 180) * 40 + (dismissals / 30) * 20
+            n_avg, n_sr = norm(avg, max_avg), norm(sr, max_sr)
+            n_dismiss = norm(dismissals, max_dismiss)
+            if fmt == "T20":
+                s = (n_avg * 0.3 + n_sr * 0.4 + n_dismiss * 0.3) * 100
+            elif fmt == "ODI":
+                s = (n_avg * 0.4 + n_sr * 0.2 + n_dismiss * 0.4) * 100
+            else: # Test
+                s = (n_avg * 0.5 + n_dismiss * 0.5) * 100
         
-        return s # Raw score with penalties
+        return s
 
     def calibrate_score(row):
         # Calibration removed - using raw scores for training
@@ -87,6 +167,8 @@ def build_refined_pipeline():
 
     print("Calculating base scores and applying calibration & caps...")
     agg_df['score'] = agg_df.apply(get_base_score, axis=1)
+    
+    # Final Stats Summary
     agg_df['score'] = agg_df.apply(calibrate_score, axis=1)
     agg_df['score'] = agg_df.apply(lambda x: apply_max_cap(x['score'], x['player_type'], x['match_format']), axis=1)
 
@@ -142,8 +224,18 @@ def build_refined_pipeline():
             ]
             
             if len(filtered) > 0:
-                benchmark = np.percentile(filtered["percent"], 70)
-                # Apply hard role caps to prevent excessively high benchmarks
+                # Refined format-specific selection zones
+                if f == "T20":
+                    low_p, high_p = 0.65, 0.85
+                elif f == "ODI":
+                    low_p, high_p = 0.60, 0.85
+                else: # Test
+                    low_p, high_p = 0.50, 0.80
+
+                low_b = filtered["percent"].quantile(low_p)
+                high_b = filtered["percent"].quantile(high_p)
+                band = filtered[(filtered["percent"] >= low_b) & (filtered["percent"] <= high_b)]
+                benchmark = band["percent"].mean() if not band.empty else filtered["percent"].quantile((low_p + high_p)/2)
                 benchmark = apply_role_caps(benchmark, r, f)
             else:
                 benchmark = 0
@@ -190,16 +282,16 @@ def build_refined_pipeline():
 
     # 7. Save Models
     os.makedirs("model", exist_ok=True)
-    joblib.dump(kmeans, "model/kmeans_model.pkl")
-    joblib.dump(scaler, "model/scaler.pkl")
-    joblib.dump(benchmarks, "model/benchmarks.pkl")
-    joblib.dump(max_score, "model/max_score.pkl")
+    joblib.dump(kmeans, os.path.join("model", "kmeans_model.pkl"))
+    joblib.dump(scaler, os.path.join("model", "scaler.pkl"))
+    joblib.dump(benchmarks, os.path.join("model", "benchmarks.pkl"))
+    joblib.dump(max_score, os.path.join("model", "max_score.pkl"))
     
     # Save the Random Forest classifier
     from sklearn.ensemble import RandomForestClassifier
     rf = RandomForestClassifier(n_estimators=200, random_state=42)
     rf.fit(X_scaled, agg_df['levels'])
-    joblib.dump(rf, "model/selection_model.pkl")
+    joblib.dump(rf, os.path.join("model", "selection_model.pkl"))
 
     print("Success: Refined pipeline with High Score and Form impact complete.")
 
